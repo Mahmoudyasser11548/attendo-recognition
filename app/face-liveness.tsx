@@ -169,7 +169,7 @@ export default function FaceRecognition() {
         )
         .withFaceLandmarks()
         .withFaceDescriptor();
-      console.log(fullDetection);
+
       if (!fullDetection) {
         scheduleDetect(1000);
         return;
@@ -179,7 +179,6 @@ export default function FaceRecognition() {
         fullDetection.descriptor,
         referenceDescriptorRef.current,
       );
-      console.log(distance);
 
       if (distance < 0.6) {
         setProgress(100);
