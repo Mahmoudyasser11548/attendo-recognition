@@ -47,11 +47,6 @@ export default function FaceRecognition() {
 
   const startVideo = async () => {
     try {
-      if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
-        setStatus("Camera not supported on this device");
-        return;
-      }
-
       const stream = await navigator.mediaDevices.getUserMedia({
         video: {
           facingMode: "user",
@@ -63,15 +58,18 @@ export default function FaceRecognition() {
 
       streamRef.current = stream;
 
-      if (videoRef.current) {
-        videoRef.current.srcObject = stream;
+      const video = videoRef.current;
+      if (!video) return;
 
-        await new Promise<void>((resolve) => {
-          videoRef.current!.onloadedmetadata = () => resolve();
-        });
+      video.srcObject = stream;
+      video.muted = true;
+      video.playsInline = true;
 
-        await videoRef.current.play();
-      }
+      // 🔥 IMPORTANT: don't wait for metadata in WebView
+      await video.play().catch(() => {
+        console.log("Autoplay blocked, retrying...");
+        setTimeout(() => video.play(), 300);
+      });
     } catch (err) {
       console.error("Camera error:", err);
       setStatus("Failed to access camera");
