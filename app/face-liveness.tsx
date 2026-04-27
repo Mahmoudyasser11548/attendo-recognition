@@ -55,8 +55,8 @@ export default function FaceRecognition() {
       const stream = await navigator.mediaDevices.getUserMedia({
         video: {
           facingMode: "user",
-          width: { ideal: 320 },
-          height: { ideal: 240 },
+          width: { ideal: 240 },
+          height: { ideal: 180 },
         },
         audio: false,
       });
@@ -86,97 +86,123 @@ export default function FaceRecognition() {
     return vertical / horizontal;
   };
 
+  let isProcessing = false;
+
+  // eslint-disable-next-line react-hooks/immutability
   const detect = useEffectEvent(async () => {
-    if (!videoRef.current || !referenceDescriptorRef.current) {
-      // eslint-disable-next-line react-hooks/immutability
-      scheduleDetect();
-      return;
-    }
+    if (isProcessing) return;
+    // eslint-disable-next-line react-hooks/immutability
+    isProcessing = true;
 
-    const detection = await faceapi
-      .detectSingleFace(
-        videoRef.current,
-        new faceapi.TinyFaceDetectorOptions({
-          inputSize: 160,
-          scoreThreshold: 0.6,
-        }),
-      )
-      .withFaceLandmarks()
-      .withFaceDescriptor();
-
-    if (!detection) {
-      setStatus("Align your face inside the frame");
-      scheduleDetect();
-      return;
-    }
-
-    const landmarks = detection.landmarks;
-
-    if (!blinkDoneRef.current) {
-      setStatus("Blink your eyes");
-
-      const eyeRatio =
-        getEyeRatio(landmarks.getLeftEye()) +
-        getEyeRatio(landmarks.getRightEye());
-
-      console.log("Eye ratio:", eyeRatio);
-      if (eyeRatio > 0.85 && eyeRatio < 1.19) {
-        blinkDoneRef.current = true;
-        setBlinkDone(true);
-        setProgress(50);
+    try {
+      if (!videoRef.current || !referenceDescriptorRef.current) {
+        // eslint-disable-next-line react-hooks/immutability
+        scheduleDetect(1000);
+        return;
       }
 
-      scheduleDetect();
-      return;
-    }
+      const detection = await faceapi
+        .detectSingleFace(
+          videoRef.current,
+          new faceapi.TinyFaceDetectorOptions({
+            inputSize: 128, // 🔥 lower = safer
+            scoreThreshold: 0.6,
+          }),
+        )
+        .withFaceLandmarks();
 
-    if (!turnDoneRef.current) {
-      setStatus("Turn your head slightly");
-
-      const nose = landmarks.getNose();
-      const jaw = landmarks.getJawOutline();
-      const center = (jaw[0].x + jaw[16].x) / 2;
-      const noseX = nose[3].x;
-
-      if (Math.abs(noseX - center) > 20) {
-        turnDoneRef.current = true;
-        setTurnDone(true);
-        setProgress(80);
+      if (!detection) {
+        setStatus("Align your face inside the frame");
+        scheduleDetect(1000);
+        return;
       }
 
-      scheduleDetect();
-      return;
-    }
+      const landmarks = detection.landmarks;
 
-    setStatus("Verifying face...");
+      // 👁️ Blink detection
+      if (!blinkDoneRef.current) {
+        setStatus("Blink your eyes");
 
-    const distance = faceapi.euclideanDistance(
-      detection.descriptor,
-      referenceDescriptorRef.current,
-    );
+        const eyeRatio =
+          getEyeRatio(landmarks.getLeftEye()) +
+          getEyeRatio(landmarks.getRightEye());
 
-    if (distance < 0.6) {
-      setProgress(100);
-      setStatus("Face recognized");
+        if (eyeRatio > 0.85 && eyeRatio < 1.19) {
+          blinkDoneRef.current = true;
+          setBlinkDone(true);
+          setProgress(50);
+        }
 
-      if (animationRef.current) {
-        cancelAnimationFrame(animationRef.current);
+        scheduleDetect(800);
+        return;
       }
 
-      return;
+      // 🔄 Head turn detection
+      if (!turnDoneRef.current) {
+        setStatus("Turn your head slightly");
+
+        const nose = landmarks.getNose();
+        const jaw = landmarks.getJawOutline();
+        const center = (jaw[0].x + jaw[16].x) / 2;
+        const noseX = nose[3].x;
+
+        if (Math.abs(noseX - center) > 20) {
+          turnDoneRef.current = true;
+          setTurnDone(true);
+          setProgress(80);
+        }
+
+        scheduleDetect(800);
+        return;
+      }
+
+      // 🧠 FINAL recognition (ONLY ONCE)
+      setStatus("Verifying face...");
+
+      const fullDetection = await faceapi
+        .detectSingleFace(
+          videoRef.current,
+          new faceapi.TinyFaceDetectorOptions({
+            inputSize: 128,
+            scoreThreshold: 0.6,
+          }),
+        )
+        .withFaceLandmarks()
+        .withFaceDescriptor();
+      console.log(fullDetection);
+      if (!fullDetection) {
+        scheduleDetect(1000);
+        return;
+      }
+
+      const distance = faceapi.euclideanDistance(
+        fullDetection.descriptor,
+        referenceDescriptorRef.current,
+      );
+      console.log(distance);
+
+      if (distance < 0.6) {
+        setProgress(100);
+        setStatus("Face recognized");
+        return;
+      }
+
+      setStatus(`Face not recognized (${distance.toFixed(2)})`);
+      scheduleDetect(1200);
+    } catch (err) {
+      console.error("Detect error:", err);
+      setStatus("Detection error - retrying...");
+      scheduleDetect(1500);
+    } finally {
+      isProcessing = false;
     }
-
-    setStatus(`Face not recognized (distance: ${distance.toFixed(2)})`);
-
-    await new Promise((resolve) => setTimeout(resolve, 120));
-    scheduleDetect();
   });
 
-  const scheduleDetect = () => {
+  const scheduleDetect = (delay = 1000) => {
     setTimeout(() => {
       // eslint-disable-next-line react-hooks/rules-of-hooks
       void detect();
-    }, 200); // ~5 FPS instead of 60
+    }, delay);
   };
 
   useEffect(() => {
@@ -197,7 +223,9 @@ export default function FaceRecognition() {
         if (!isMounted) return;
 
         setStatus("Camera ready. Align your face");
-        scheduleDetect();
+        setTimeout(() => {
+          scheduleDetect(1000);
+        }, 2000);
       } catch (error) {
         console.error(error);
         setStatus("Error starting face detection");
@@ -227,6 +255,7 @@ export default function FaceRecognition() {
           autoPlay
           muted
           playsInline
+          disablePictureInPicture
           className="w-full h-full object-cover"
         />
       </div>
